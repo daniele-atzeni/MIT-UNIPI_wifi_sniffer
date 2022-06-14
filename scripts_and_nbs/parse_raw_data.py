@@ -38,17 +38,11 @@ def parse_scan_list(scan_str:str) -> list:
 
 
 def main():
-    SCAN_OUTPUTS = ['type',
-            'subtype',
-            'to_ds',
-            'from_ds',
+    SCAN_OUTPUTS = [
             'flags',
             'duration_id',
             'sequence_ctrl',
-            'addr1',
-            'addr2',
-            'addr3',
-            'addr4',
+            'mac_address',
             'rssi',
             'channel',
             'payload_size',
