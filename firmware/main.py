@@ -6,17 +6,15 @@ import gc
 import mcu
 import time
 import json
-import queue
-import serial
 import timers
 import watchdog
 import threading as th
 from tslog import tslog
-########################################
-from networking import wifi, wifisniff, socket
+from crypto import element
+from networking import wifi, wifisniff
 ########################################
 import utils.config as cfg
-from crypto import element
+import utils.utils as ut
 
 '''
 SCAN FIELDS:
@@ -37,6 +35,8 @@ SCAN FIELDS:
 'payload'
 '''
 
+# Init sys
+watchdog.setup(cfg.L_WATCHDOG)
 
 board.init()
 board.summary()
@@ -71,49 +71,69 @@ try:
 except Exception as e:
     print("Error in initializations: ", e)
 
+pub_lock = th.Lock()
+pub_lock.acquire()
+
+timers.Timer().interval(cfg.MAIN_FREQ, pub_lock.release)
+
+
+print("start main")
 while True:
-    try:
-        ts = time.now()
-        if ts % (cfg.SCAN_TIME // 1000) == 0:   # ts is in seconds
-            print("Scanning...")
-            # start scanning for SCAN_TIME milliseconds
-            #wifisniff.configure()
-            wifisniff.start()
-            scan_res = wifisniff.sniff(n=-1, hex=True, wait=cfg.SCAN_TIME)
-            wifisniff.stop()
-            print("...scanning done!")
-            print("Devices found: ", len(scan_res))
+    pub_lock.acquire()
 
-            cfg.PUB_DICT['n_devices'] = len(scan_res)
-            cfg.PUB_DICT['sum_rssi'] = sum([x[11] for x in scan_res])       # 11 is the index of the RSSI in the scans (look at utils/config.py)
+    if ut.fota_ongoing:
+        ut.pub_stopped = True
+        print("GC:  ", gc.info())
+        print("[FOTA] Pub loop waiting for FOTA...")
+        sleep(5000)
+        continue
+    else:
+        try:
+            ts = time.now()
+            if ts % (cfg.SCAN_TIME // 1000) == 0:   # ts is in seconds
+                print("Scanning...")
+                # start scanning for SCAN_TIME milliseconds
+                #wifisniff.configure()
+                wifisniff.start()
+                scan_res = wifisniff.sniff(n=-1, hex=True, wait=cfg.SCAN_TIME)
+                wifisniff.stop()
+                print("...scanning done!")
+                print("Devices found: ", len(scan_res))
 
-            # we can avoid saving a lot of fields. 
-            # we are just going to save flags, duration_id, sequence_ctr, source_mac_addr, RSSI, channel, payload_size
-            # indices relative to these fields are saved in cfg.RELEVANT_FIELDS
-            for i, scan in enumerate(scan_res):
-                scan_res[i] = [scan[j] for j in cfg.RELEVANT_FIELDS]
-            # hashing the MAC address
-            # scan_res[3] = element.sha256(scan_res[3])
+                cfg.PUB_DICT['n_devices'] = len(scan_res)
+                cfg.PUB_DICT['sum_rssi'] = sum([x[11] for x in scan_res])       # 11 is the index of the RSSI in the scans (look at utils/config.py)
 
-            cfg.PUB_DICT['ts'] = ts
-            cfg.PUB_DICT['scans'] = scan_res
+                # we can avoid saving a lot of fields. 
+                # we are just going to save flags, duration_id, sequence_ctr, source_mac_addr, RSSI, channel, payload_size
+                # indices relative to these fields are saved in cfg.RELEVANT_FIELDS
+                for i, scan in enumerate(scan_res):
+                    scan_res[i] = [scan[j] for j in cfg.RELEVANT_FIELDS]
+                # hashing the MAC address
+                # scan_res[3] = element.sha256(scan_res[3])
 
-            # publish the results
-            try: 
-                print("Publishing...")
-                #print(cfg.PUB_DICT)
-                device.publish(cfg.PUB_DICT, "data")
-                print("...published!")
-                cfg.PUB_DICT = {}
+                cfg.PUB_DICT['ts'] = ts
+                cfg.PUB_DICT['scans'] = scan_res
 
-            except Exception as e:
-                # save results to the log
-                print("Publish on ZDM Error: ", e)
-                try:
-                    seqn = tlog.store_object(cfg.PUB_DICT)
-                    print("<=", cfg.PUB_DICT)
+                # publish the results
+                try: 
+                    print("Publishing...")
+                    #print(cfg.PUB_DICT)
+                    device.publish(cfg.PUB_DICT, "data")
+                    print("...published!")
+                    cfg.PUB_DICT = {}
+
                 except Exception as e:
-                    print("Store error: ", e)
+                    # save results to the log
+                    print("Publish on ZDM Error: ", e)
+                    try:
+                        seqn = tlog.store_object(cfg.PUB_DICT)
+                        print("<=", cfg.PUB_DICT)
+                    except Exception as e:
+                        print("Store error: ", e)
 
-    except Exception as e:
-        print(e)
+        except Exception as e:
+            print("Generic Error:", e)
+            board.error_cloud()
+            mcu.reset()
+    
+    watchdog.kick()

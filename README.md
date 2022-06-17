@@ -31,5 +31,3 @@ Scan attribute names:
 - 'channel'
 - 'payload_size'
 - 'payload'
-
-We can consider to collect and send just some relevant fields
